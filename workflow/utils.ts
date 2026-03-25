@@ -81,7 +81,7 @@ export async function getHackerNewsTopStories(today: string, {
       })
     }
     catch (error) {
-      throw new Error(`failed to load rss source list: ${rssListUrl}, ${(error as Error).message}`)
+      throw new Error(`failed to load rss source list: ${sanitizeUrl(rssListUrl)}, ${(error as Error).message}`)
     }
   }
 
@@ -97,11 +97,37 @@ export async function getHackerNewsTopStories(today: string, {
           timeout: 30000,
           parseResponse: txt => txt,
         })
-        return parseStoriesFromRss(xml, rssUrl)
+        const stories = parseStoriesFromRss(xml, rssUrl)
+        if (stories.length) {
+          return stories
+        }
+
+        const nestedRssUrls = parseRssUrlsFromList(xml)
+        if (!nestedRssUrls.length) {
+          return []
+        }
+
+        const nestedStories = await Promise.all(
+          nestedRssUrls.map(async (nestedRssUrl) => {
+            try {
+              const nestedXml = await $fetch(nestedRssUrl, {
+                timeout: 30000,
+                parseResponse: txt => txt,
+              })
+              return parseStoriesFromRss(nestedXml, nestedRssUrl)
+            }
+            catch (nestedError) {
+              console.error('failed to fetch nested rss source', nestedRssUrl, nestedError)
+              return []
+            }
+          }),
+        )
+
+        return nestedStories.flat()
       }
       catch (error) {
         console.error('failed to fetch rss source', rssUrl, error)
-        return [] as Story[]
+        return []
       }
     }),
   )
@@ -184,7 +210,22 @@ function parseRssUrlsFromList(content: string): string[] {
   const urls = content
     .split('\n')
     .map(line => line.trim())
-    .filter(line => line.startsWith('http://') || line.startsWith('https://'))
+    .flatMap((line) => {
+      const markdownMatches = Array.from(line.matchAll(/\((https?:\/\/\S+?)\)/g)).map(item => item[1])
+      const rawUrlMatches = Array.from(line.matchAll(/https?:\/\/\S+/g)).map(item => item[0])
+      return [...markdownMatches, ...rawUrlMatches]
+    })
+    .map(url => url.replace(/[),.;]+$/g, ''))
+    .filter((url) => {
+      const lower = url.toLowerCase()
+      return (
+        lower.includes('.xml')
+        || lower.includes('/rss')
+        || lower.includes('/feed')
+        || lower.includes('atom')
+        || lower.includes('opml')
+      )
+    })
   return Array.from(new Set(urls))
 }
 
@@ -207,10 +248,15 @@ function getRssItemLink($: cheerio.CheerioAPI, el: cheerio.Element) {
   return undefined
 }
 
-function getStoryId(link: string, guid: string, index: number) {
-  const seed = link || guid || `${index}`
+function getStoryId(link: string, guid: string, index: number, sourceUrl: string) {
+  const seed = link || guid || `${sourceUrl}-${index}`
   const normalized = seed.replace(/[^a-z0-9]/gi, '-').replace(/^-+|-+$/g, '').slice(0, 64)
-  return normalized || `story-${index}`
+  if (normalized) {
+    return normalized
+  }
+
+  const sourceSeed = sourceUrl.replace(/[^a-z0-9]/gi, '-').replace(/^-+|-+$/g, '').slice(0, 24)
+  return `story-${sourceSeed || 'rss'}-${index}`
 }
 
 function parseStoriesFromRss(xml: string, sourceUrl: string): Story[] {
@@ -221,16 +267,31 @@ function parseStoriesFromRss(xml: string, sourceUrl: string): Story[] {
     const link = getRssItemLink($, el)
     const guid = ($(el).find('guid, id').first().text() || '').trim()
     const publishedAt = ($(el).find('pubDate, published, updated').first().text() || '').trim()
-    const safeLink = link || sourceUrl
-
+    if (!link) {
+      return null
+    }
     return {
-      id: getStoryId(safeLink, guid, index),
+      id: getStoryId(link, guid, index, sourceUrl),
       title,
-      url: safeLink,
-      hackerNewsUrl: safeLink,
+      url: link,
+      hackerNewsUrl: link,
       publishedAt: publishedAt || undefined,
     }
-  }).get().filter(story => Boolean(story.title && story.url))
+  }).get().filter((story): story is Story => Boolean(story?.title && story.url))
+}
+
+function sanitizeUrl(rawUrl: string) {
+  try {
+    const parsed = new URL(rawUrl)
+    parsed.username = ''
+    parsed.password = ''
+    parsed.search = ''
+    parsed.hash = ''
+    return parsed.toString()
+  }
+  catch {
+    return rawUrl.split('?')[0]
+  }
 }
 
 export async function concatAudioFiles(audioFiles: string[], BROWSER: Fetcher, { workerUrl }: { workerUrl: string }) {

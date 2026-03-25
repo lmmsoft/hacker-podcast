@@ -2,7 +2,7 @@ import type { WorkflowEvent, WorkflowStep, WorkflowStepConfig } from 'cloudflare
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { generateText } from 'ai'
 import { WorkflowEntrypoint } from 'cloudflare:workers'
-import { podcastTitle } from '@/config'
+import { defaultLlmBaseUrl, defaultLlmModel, podcastTitle } from '@/config'
 import { introPrompt, summarizeBlogPrompt, summarizePodcastPrompt, summarizeStoryPrompt } from './prompt'
 import synthesize from './tts'
 import { concatAudioFiles, getHackerNewsTopStories, getStoryContent } from './utils'
@@ -47,7 +47,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
     const today = event.payload?.today || new Date().toISOString().split('T')[0]
     const openai = createOpenAICompatible({
       name: 'openai',
-      baseURL: this.env.OPENAI_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4',
+      baseURL: this.env.OPENAI_BASE_URL || defaultLlmBaseUrl,
       headers: {
         Authorization: `Bearer ${this.env.OPENAI_API_KEY!}`,
       },
@@ -77,7 +77,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
       const text = await step.do(`summarize story ${story.id}: ${story.title}`, retryConfig, async () => {
         const { text, usage, finishReason } = await generateText({
-          model: openai(this.env.OPENAI_MODEL || 'glm-4.7-flash'),
+          model: openai(this.env.OPENAI_MODEL || defaultLlmModel),
           system: summarizeStoryPrompt,
           prompt: storyResponse,
         })
@@ -109,7 +109,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const podcastContent = await step.do('create podcast content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL || 'glm-4.7-flash'),
+        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL || defaultLlmModel),
         system: summarizePodcastPrompt,
         prompt: allStories.join('\n\n---\n\n'),
         maxOutputTokens: maxTokens,
@@ -127,7 +127,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const blogContent = await step.do('create blog content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL || 'glm-4.7-flash'),
+        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL || defaultLlmModel),
         system: summarizeBlogPrompt,
         prompt: `<stories>${JSON.stringify(stories)}</stories>\n\n---\n\n${allStories.join('\n\n---\n\n')}`,
         maxOutputTokens: maxTokens,
@@ -145,7 +145,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const introContent = await step.do('create intro content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_MODEL || 'glm-4.7-flash'),
+        model: openai(this.env.OPENAI_MODEL || defaultLlmModel),
         system: introPrompt,
         prompt: podcastContent,
         maxRetries: 3,
