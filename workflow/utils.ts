@@ -72,10 +72,18 @@ export async function getHackerNewsTopStories(today: string, {
   const rssListUrl = RSS_SOURCE_LIST_URL || 'https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/'
   console.info('get RSS list from', rssListUrl)
 
-  const rssListContent = RSS_FEED_URLS || await $fetch(rssListUrl, {
-    timeout: 30000,
-    parseResponse: txt => txt,
-  })
+  let rssListContent = RSS_FEED_URLS
+  if (!rssListContent) {
+    try {
+      rssListContent = await $fetch(rssListUrl, {
+        timeout: 30000,
+        parseResponse: txt => txt,
+      })
+    }
+    catch (error) {
+      throw new Error(`failed to load rss source list: ${rssListUrl}, ${(error as Error).message}`)
+    }
+  }
 
   const rssUrls = parseRssUrlsFromList(rssListContent)
   if (!rssUrls.length) {
@@ -135,7 +143,7 @@ export async function getHackerNewsTopStories(today: string, {
   return Array.from(map.values()).slice(0, 30)
 }
 
-export async function getHackerNewsStory(story: Story, maxTokens: number, { JINA_KEY, FIRECRAWL_KEY }: { JINA_KEY?: string, FIRECRAWL_KEY?: string }) {
+export async function getStoryContent(story: Story, maxTokens: number, { JINA_KEY, FIRECRAWL_KEY }: { JINA_KEY?: string, FIRECRAWL_KEY?: string }) {
   const article = await getContentFromJina(story.url!, 'markdown', {}, JINA_KEY)
     .catch((error) => {
       console.error('getHackerNewsStory from Jina failed', error)
@@ -201,7 +209,7 @@ function getRssItemLink($: cheerio.CheerioAPI, el: cheerio.Element) {
 
 function getStoryId(link: string, guid: string, index: number) {
   const seed = link || guid || `${index}`
-  const normalized = seed.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 64)
+  const normalized = seed.replace(/[^a-z0-9]/gi, '-').replace(/^-+|-+$/g, '').slice(0, 64)
   return normalized || `story-${index}`
 }
 

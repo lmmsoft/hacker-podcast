@@ -67,7 +67,8 @@ OPENAI_MODEL=glm-4.7-flash
 # 可选：用于更长文本生成
 OPENAI_THINKING_MODEL=glm-4.7-flash
 
-# 可选：RSS 来源列表（默认使用内置 gist）
+# 可选：RSS 来源列表（默认使用内置 gist 列表）
+# 默认值与代码一致：`https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/`
 # RSS_SOURCE_LIST_URL=https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/
 # 或直接指定多个源（每行一个 URL）
 # RSS_FEED_URLS=https://example.com/feed.xml\nhttps://example.org/rss

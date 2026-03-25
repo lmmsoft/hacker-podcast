@@ -5,7 +5,7 @@ import { WorkflowEntrypoint } from 'cloudflare:workers'
 import { podcastTitle } from '@/config'
 import { introPrompt, summarizeBlogPrompt, summarizePodcastPrompt, summarizeStoryPrompt } from './prompt'
 import synthesize from './tts'
-import { concatAudioFiles, getHackerNewsStory, getHackerNewsTopStories } from './utils'
+import { concatAudioFiles, getHackerNewsTopStories, getStoryContent } from './utils'
 
 interface Params {
   today?: string
@@ -70,7 +70,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     for (const story of stories) {
       const storyResponse = await step.do(`get story ${story.id}: ${story.title}`, retryConfig, async () => {
-        return await getHackerNewsStory(story, maxTokens, this.env)
+        return await getStoryContent(story, maxTokens, this.env)
       })
 
       console.info(`get story ${story.id} content success`)
