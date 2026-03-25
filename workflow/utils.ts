@@ -62,49 +62,85 @@ async function getContentFromFirecrawl(url: string, format: 'html' | 'markdown',
   }
 }
 
-export async function getHackerNewsTopStories(today: string, { JINA_KEY, FIRECRAWL_KEY }: { JINA_KEY?: string, FIRECRAWL_KEY?: string }) {
-  const url = `https://news.ycombinator.com/front?day=${today}`
+export async function getHackerNewsTopStories(today: string, {
+  RSS_SOURCE_LIST_URL,
+  RSS_FEED_URLS,
+}: {
+  RSS_SOURCE_LIST_URL?: string
+  RSS_FEED_URLS?: string
+}) {
+  const rssListUrl = RSS_SOURCE_LIST_URL || 'https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/'
+  console.info('get RSS list from', rssListUrl)
 
-  const html = await getContentFromJina(url, 'html', {}, JINA_KEY)
-    .catch((error) => {
-      console.error('getHackerNewsTopStories from Jina failed', error)
-      return getContentFromFirecrawl(url, 'html', {}, FIRECRAWL_KEY)
+  const rssListContent = RSS_FEED_URLS || await $fetch(rssListUrl, {
+    timeout: 30000,
+    parseResponse: txt => txt,
+  })
+
+  const rssUrls = parseRssUrlsFromList(rssListContent)
+  if (!rssUrls.length) {
+    throw new Error(`no rss sources found from list: ${rssListUrl}`)
+  }
+
+  const feedStories = await Promise.all(
+    rssUrls.map(async (rssUrl) => {
+      try {
+        const xml = await $fetch(rssUrl, {
+          timeout: 30000,
+          parseResponse: txt => txt,
+        })
+        return parseStoriesFromRss(xml, rssUrl)
+      }
+      catch (error) {
+        console.error('failed to fetch rss source', rssUrl, error)
+        return [] as Story[]
+      }
+    }),
+  )
+
+  const dayStart = new Date(`${today}T00:00:00.000Z`).getTime()
+  const dayEnd = new Date(`${today}T23:59:59.999Z`).getTime()
+
+  const map = new Map<string, Story>()
+  for (const story of feedStories.flat()) {
+    if (!story.url || !story.title) {
+      continue
+    }
+
+    if (story.publishedAt) {
+      const publishedAt = new Date(story.publishedAt).getTime()
+      if (!Number.isNaN(publishedAt) && (publishedAt < dayStart || publishedAt > dayEnd)) {
+        continue
+      }
+    }
+
+    const dedupeKey = story.url
+    if (!map.has(dedupeKey)) {
+      map.set(dedupeKey, story)
+    }
+  }
+
+  const stories = Array.from(map.values())
+    .sort((a, b) => {
+      const aTime = a.publishedAt ? new Date(a.publishedAt).getTime() : 0
+      const bTime = b.publishedAt ? new Date(b.publishedAt).getTime() : 0
+      return bTime - aTime
     })
+    .slice(0, 30)
 
-  const $ = cheerio.load(html)
-  const items = $('.athing.submission')
+  if (stories.length) {
+    return stories
+  }
 
-  const stories: Story[] = items.map((i, el) => ({
-    id: $(el).attr('id'),
-    title: $(el).find('.titleline > a').text(),
-    url: $(el).find('.titleline > a').attr('href'),
-    hackerNewsUrl: `https://news.ycombinator.com/item?id=${$(el).attr('id')}`,
-  })).get()
-
-  return stories.filter(story => story.id && story.url)
+  return Array.from(map.values()).slice(0, 30)
 }
 
 export async function getHackerNewsStory(story: Story, maxTokens: number, { JINA_KEY, FIRECRAWL_KEY }: { JINA_KEY?: string, FIRECRAWL_KEY?: string }) {
-  const headers: HeadersInit = {
-    'X-Retain-Images': 'none',
-  }
-
-  if (JINA_KEY) {
-    headers.Authorization = `Bearer ${JINA_KEY}`
-  }
-
-  const [article, comments] = await Promise.all([
-    getContentFromJina(story.url!, 'markdown', {}, JINA_KEY)
-      .catch((error) => {
-        console.error('getHackerNewsStory from Jina failed', error)
-        return getContentFromFirecrawl(story.url!, 'markdown', {}, FIRECRAWL_KEY)
-      }),
-    getContentFromJina(`https://news.ycombinator.com/item?id=${story.id}`, 'markdown', { include: '.comment-tree', exclude: '.navs' }, JINA_KEY)
-      .catch((error) => {
-        console.error('getHackerNewsStory from Jina failed', error)
-        return getContentFromFirecrawl(`https://news.ycombinator.com/item?id=${story.id}`, 'markdown', { include: '.comment-tree', exclude: '.navs' }, FIRECRAWL_KEY)
-      }),
-  ])
+  const article = await getContentFromJina(story.url!, 'markdown', {}, JINA_KEY)
+    .catch((error) => {
+      console.error('getHackerNewsStory from Jina failed', error)
+      return getContentFromFirecrawl(story.url!, 'markdown', {}, FIRECRAWL_KEY)
+    })
   return [
     story.title
       ? `
@@ -120,14 +156,73 @@ ${article.substring(0, maxTokens * 5)}
 </article>
 `
       : '',
-    comments
-      ? `
-<comments>
-${comments.substring(0, maxTokens * 5)}
-</comments>
-`
-      : '',
   ].filter(Boolean).join('\n\n---\n\n')
+}
+
+function parseRssUrlsFromList(content: string): string[] {
+  if (!content.trim()) {
+    return []
+  }
+
+  if (content.includes('<opml') || content.includes('<outline')) {
+    const $ = cheerio.load(content, { xml: true })
+    const urls = $('outline[xmlUrl]')
+      .map((_, el) => $(el).attr('xmlUrl')?.trim() || '')
+      .get()
+      .filter(Boolean)
+    return Array.from(new Set(urls))
+  }
+
+  const urls = content
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('http://') || line.startsWith('https://'))
+  return Array.from(new Set(urls))
+}
+
+function getRssItemLink($: cheerio.CheerioAPI, el: cheerio.Element) {
+  const atomAltLink = $(el).find('link[rel="alternate"]').attr('href')?.trim()
+  if (atomAltLink) {
+    return atomAltLink
+  }
+
+  const atomFirstLink = $(el).find('link').first().attr('href')?.trim()
+  if (atomFirstLink) {
+    return atomFirstLink
+  }
+
+  const rssLink = $(el).find('link').first().text().trim()
+  if (rssLink) {
+    return rssLink
+  }
+
+  return undefined
+}
+
+function getStoryId(link: string, guid: string, index: number) {
+  const seed = link || guid || `${index}`
+  const normalized = seed.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 64)
+  return normalized || `story-${index}`
+}
+
+function parseStoriesFromRss(xml: string, sourceUrl: string): Story[] {
+  const $ = cheerio.load(xml, { xml: true })
+  const items = $('item, entry')
+  return items.map((index, el) => {
+    const title = ($(el).find('title').first().text() || '').trim()
+    const link = getRssItemLink($, el)
+    const guid = ($(el).find('guid, id').first().text() || '').trim()
+    const publishedAt = ($(el).find('pubDate, published, updated').first().text() || '').trim()
+    const safeLink = link || sourceUrl
+
+    return {
+      id: getStoryId(safeLink, guid, index),
+      title,
+      url: safeLink,
+      hackerNewsUrl: safeLink,
+      publishedAt: publishedAt || undefined,
+    }
+  }).get().filter(story => Boolean(story.title && story.url))
 }
 
 export async function concatAudioFiles(audioFiles: string[], BROWSER: Fetcher, { workerUrl }: { workerUrl: string }) {

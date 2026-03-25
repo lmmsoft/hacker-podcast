@@ -1,6 +1,6 @@
 # Agili 的 Hacker Podcast
 
-一个基于 AI 的 Hacker News 中文播客项目，每天自动抓取 Hacker News 热门文章，通过 AI 生成中文总结并转换为播客内容。
+一个基于 AI 的中文播客项目，每天自动抓取 RSS 热门文章，通过 AI 生成中文总结并转换为播客内容。
 
 [<img src="https://devin.ai/assets/deepwiki-badge.png" alt="DeepWiki" height="20"/>](https://deepwiki.com/miantiao-me/hacker-podcast)
 
@@ -14,7 +14,7 @@
 
 ## 主要特性
 
-- 🤖 自动抓取 Hacker News 每日热门文章
+- 🤖 自动抓取精选 RSS 源每日热门文章
 - 🎯 使用 AI 智能总结文章内容和评论
 - 🎙️ 通过 TTS 生成中文播报
 - 📱 支持网页和播客 App 收听
@@ -32,7 +32,7 @@
 
 ## 工作流程
 
-1. 定时抓取 Hacker News 热门文章
+1. 定时抓取 RSS 热门文章
 2. 使用 AI 生成中文摘要和播报文稿
 3. 通过 TTS 转换为音频。
 4. 存储到 Cloudflare R2 和 KV
@@ -60,9 +60,22 @@ NEXT_STATIC_HOST=http://localhost:3000/static
 NODE_ENV=development
 HACKER_PODCAST_WORKER_URL=https://you-worker-url
 HACKER_PODCAST_R2_BUCKET_URL=https://your-bucket-url
-OPENAI_API_KEY=your_api_key
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4.1
+# 默认使用 GLM-4.7-Flash（OpenAI 兼容接口）
+OPENAI_API_KEY=your_glm_api_key
+OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+OPENAI_MODEL=glm-4.7-flash
+# 可选：用于更长文本生成
+OPENAI_THINKING_MODEL=glm-4.7-flash
+
+# 可选：RSS 来源列表（默认使用内置 gist）
+# RSS_SOURCE_LIST_URL=https://gist.githubusercontent.com/emschwartz/e6d2bf860ccc367fe37ff953ba6de66b/raw/
+# 或直接指定多个源（每行一个 URL）
+# RSS_FEED_URLS=https://example.com/feed.xml\nhttps://example.org/rss
+
+# TTS 默认即 edge-tts，无需配置；以下为可选参数
+# TTS_PROVIDER=edge
+# MAN_VOICE_ID=zh-CN-YunyangNeural
+# WOMAN_VOICE_ID=zh-CN-XiaoxiaoNeural
 
 ```
 
@@ -98,6 +111,13 @@ pnpx wrangler secret put --cwd worker HACKER_PODCAST_R2_BUCKET_URL
 pnpx wrangler secret put --cwd worker OPENAI_API_KEY
 pnpx wrangler secret put --cwd worker OPENAI_BASE_URL
 pnpx wrangler secret put --cwd worker OPENAI_MODEL
+# 可选
+pnpx wrangler secret put --cwd worker OPENAI_THINKING_MODEL
+pnpx wrangler secret put --cwd worker RSS_SOURCE_LIST_URL
+pnpx wrangler secret put --cwd worker RSS_FEED_URLS
+pnpx wrangler secret put --cwd worker TTS_PROVIDER
+pnpx wrangler secret put --cwd worker MAN_VOICE_ID
+pnpx wrangler secret put --cwd worker WOMAN_VOICE_ID
 
 # 更新 Web 程序的私有变量
 pnpx wrangler secret put NODE_ENV # 建议 production
@@ -133,4 +153,4 @@ pnpm run deploy
 
 ## 免责声明
 
-本项目与 Hacker News 和 Y Combinator 没有任何关联。"Hacker News" 是 Y Combinator 的注册商标。
+本项目与文中提及的第三方内容平台无隶属关系，相关名称和商标归各自所有者所有。
