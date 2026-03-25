@@ -74,5 +74,8 @@ export const externalLinks = {
   rss: '/rss.xml',
 }
 
+export const defaultLlmBaseUrl = 'https://open.bigmodel.cn/api/paas/v4'
+export const defaultLlmModel = 'glm-4.7-flash'
+
 export const podcastTitle = podcast.base.title
 export const podcastDescription = podcast.base.description

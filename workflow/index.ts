@@ -2,22 +2,25 @@ import type { WorkflowEvent, WorkflowStep, WorkflowStepConfig } from 'cloudflare
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { generateText } from 'ai'
 import { WorkflowEntrypoint } from 'cloudflare:workers'
-import { podcastTitle } from '@/config'
+import { defaultLlmBaseUrl, defaultLlmModel, podcastTitle } from '@/config'
 import { introPrompt, summarizeBlogPrompt, summarizePodcastPrompt, summarizeStoryPrompt } from './prompt'
 import synthesize from './tts'
-import { concatAudioFiles, getHackerNewsStory, getHackerNewsTopStories } from './utils'
+import { concatAudioFiles, getHackerNewsTopStories, getStoryContent } from './utils'
 
 interface Params {
   today?: string
 }
 
 interface Env extends CloudflareEnv {
-  OPENAI_BASE_URL: string
+  OPENAI_BASE_URL?: string
   OPENAI_API_KEY: string
-  OPENAI_MODEL: string
+  OPENAI_MODEL?: string
   OPENAI_THINKING_MODEL?: string
   OPENAI_MAX_TOKENS?: string
   JINA_KEY?: string
+  FIRECRAWL_KEY?: string
+  RSS_SOURCE_LIST_URL?: string
+  RSS_FEED_URLS?: string
   NODE_ENV: string
   HACKER_PODCAST_WORKER_URL: string
   HACKER_PODCAST_R2_BUCKET_URL: string
@@ -44,7 +47,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
     const today = event.payload?.today || new Date().toISOString().split('T')[0]
     const openai = createOpenAICompatible({
       name: 'openai',
-      baseURL: this.env.OPENAI_BASE_URL!,
+      baseURL: this.env.OPENAI_BASE_URL || defaultLlmBaseUrl,
       headers: {
         Authorization: `Bearer ${this.env.OPENAI_API_KEY!}`,
       },
@@ -67,14 +70,14 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     for (const story of stories) {
       const storyResponse = await step.do(`get story ${story.id}: ${story.title}`, retryConfig, async () => {
-        return await getHackerNewsStory(story, maxTokens, this.env)
+        return await getStoryContent(story, maxTokens, this.env)
       })
 
       console.info(`get story ${story.id} content success`)
 
       const text = await step.do(`summarize story ${story.id}: ${story.title}`, retryConfig, async () => {
         const { text, usage, finishReason } = await generateText({
-          model: openai(this.env.OPENAI_MODEL!),
+          model: openai(this.env.OPENAI_MODEL || defaultLlmModel),
           system: summarizeStoryPrompt,
           prompt: storyResponse,
         })
@@ -106,7 +109,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const podcastContent = await step.do('create podcast content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL!),
+        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL || defaultLlmModel),
         system: summarizePodcastPrompt,
         prompt: allStories.join('\n\n---\n\n'),
         maxOutputTokens: maxTokens,
@@ -124,7 +127,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const blogContent = await step.do('create blog content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL!),
+        model: openai(this.env.OPENAI_THINKING_MODEL || this.env.OPENAI_MODEL || defaultLlmModel),
         system: summarizeBlogPrompt,
         prompt: `<stories>${JSON.stringify(stories)}</stories>\n\n---\n\n${allStories.join('\n\n---\n\n')}`,
         maxOutputTokens: maxTokens,
@@ -142,7 +145,7 @@ export class HackerNewsWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const introContent = await step.do('create intro content', retryConfig, async () => {
       const { text, usage, finishReason } = await generateText({
-        model: openai(this.env.OPENAI_MODEL!),
+        model: openai(this.env.OPENAI_MODEL || defaultLlmModel),
         system: introPrompt,
         prompt: podcastContent,
         maxRetries: 3,

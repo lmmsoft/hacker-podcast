@@ -3,4 +3,5 @@ interface Story {
   title?: string
   url?: string
   hackerNewsUrl: string
+  publishedAt?: string
 }
